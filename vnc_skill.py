@@ -1,6 +1,12 @@
 #!/usr/bin/env python3
 """
 Skill wrapper for VNC operations using shadow-ai-vnc or direct vncdotool.
+
+Configuration via environment variables:
+- VNC_SERVER: VNC server IP (default: localhost)
+- VNC_PORT: VNC port (default: 5900)
+- VNC_PASSWORD: VNC password (required)
+- VNC_TIMEOUT: Connection timeout in seconds (default: 30)
 """
 
 import subprocess
@@ -8,13 +14,19 @@ import json
 import os
 from pathlib import Path
 
-VNC_SERVER = "209.126.0.181"
-VNC_PORT = 63068
-VNC_PASSWORD = "672Tdipl"
-VNC_TIMEOUT = 30
+VNC_SERVER = os.environ.get("VNC_SERVER", "localhost")
+VNC_PORT = int(os.environ.get("VNC_PORT", "5900"))
+VNC_PASSWORD = os.environ.get("VNC_PASSWORD")
+VNC_TIMEOUT = int(os.environ.get("VNC_TIMEOUT", "30"))
 
 def run_vncdotool(*args):
     """Run vncdotool CLI directly."""
+    if not VNC_PASSWORD:
+        return {
+            "success": False,
+            "error": "VNC_PASSWORD environment variable not set"
+        }
+    
     cmd = ["vncdotool", "-s", f"{VNC_SERVER}::{VNC_PORT}", "-p", VNC_PASSWORD, "-t", str(VNC_TIMEOUT)]
     cmd.extend(args)
     
@@ -77,6 +89,12 @@ if __name__ == "__main__":
     if len(sys.argv) < 2:
         print("Usage: vnc_skill.py <command> [args...]")
         print("Commands: screenshot <path>, key <key>, type <text>, click <x> <y>, move <x> <y>")
+        print()
+        print("Environment variables:")
+        print("  VNC_SERVER    - VNC server IP (default: localhost)")
+        print("  VNC_PORT      - VNC port (default: 5900)")
+        print("  VNC_PASSWORD  - VNC password (required)")
+        print("  VNC_TIMEOUT   - Connection timeout (default: 30)")
         sys.exit(1)
     
     cmd = sys.argv[1]
