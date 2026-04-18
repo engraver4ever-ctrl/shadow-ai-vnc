@@ -5,6 +5,8 @@
 
 Headless VNC client designed for AI agents and automation. Provides a clean CLI interface for connecting to VNC servers, capturing screenshots, and sending input commands — with SSH tunneling and session persistence.
 
+**Built for [OpenClaw](https://github.com/openclaw/openclaw)** — includes a ready-to-use skill wrapper.
+
 ## Installation
 
 ```bash
@@ -103,27 +105,64 @@ shadow-ai-vnc --host 192.168.1.100 --password secret123 screenshot -o /tmp/scree
 shadow-ai-vnc --host 192.168.1.100 --password-file ~/.vnc/passwd screenshot -o /tmp/screen.png
 ```
 
-## Integration with OpenClaw
+## OpenClaw Skill
+
+This repository includes `vnc_skill.py` — a lightweight skill wrapper designed for [OpenClaw](https://github.com/openclaw/openclaw) AI agents.
+
+### Quick Start
+
+```bash
+# Set environment variables
+export VNC_SERVER=192.168.1.100
+export VNC_PORT=5900
+export VNC_PASSWORD=yourpassword
+export VNC_TIMEOUT=30
+
+# Capture screenshot
+python3 vnc_skill.py screenshot /tmp/screen.png
+
+# Send input
+python3 vnc_skill.py type "Hello World"
+python3 vnc_skill.py key Return
+python3 vnc_skill.py click 500 300
+```
+
+### Skill Functions
+
+| Function | Description | Example |
+|----------|-------------|---------|
+| `vnc_screenshot(path)` | Capture screen to file | `vnc_screenshot("/tmp/screen.png")` |
+| `vnc_type(text)` | Type text string | `vnc_type("Hello")` |
+| `vnc_key(key)` | Send key press | `vnc_key("ctrl-c")` |
+| `vnc_click(x, y, button)` | Mouse click (button: 1=left, 2=middle, 3=right) | `vnc_click(100, 200)` |
+| `vnc_move(x, y)` | Move mouse to coordinates | `vnc_move(500, 300)` |
+
+### Integration Example
 
 ```python
 import subprocess
 import json
 
-def vnc_command(*args) -> dict:
+def vnc_screenshot(output: str = "/tmp/vnc_screenshot.png") -> dict:
     result = subprocess.run(
-        ["shadow-ai-vnc", *args],
-        capture_output=True,
-        text=True
+        ["python3", "vnc_skill.py", "screenshot", output],
+        capture_output=True, text=True
     )
     return json.loads(result.stdout)
 
-# Screenshot
-result = vnc_command("--host", "192.168.1.100", "screenshot", "--output", "/tmp/screen.png")
-
-# With session
-vnc_command("--host", "192.168.1.100", "connect")  # returns session_id
-vnc_command("--session", "abc123", "screenshot", "--output", "/tmp/screen.png")
+def vnc_type(text: str) -> dict:
+    result = subprocess.run(
+        ["python3", "vnc_skill.py", "type", text],
+        capture_output=True, text=True
+    )
+    return json.loads(result.stdout)
 ```
+
+---
+
+## Standalone CLI
+
+The main `shadow-ai-vnc` CLI provides additional features like session persistence and SSH tunneling.
 
 ## Key Mappings
 
@@ -143,8 +182,12 @@ vnc_command("--session", "abc123", "screenshot", "--output", "/tmp/screen.png")
 
 ```
 shadow-ai-vnc/
-├── shadow-ai-vnc.py    # Main CLI
+├── vnc_skill.py        # OpenClaw skill wrapper (simple, no deps)
+├── shadow-ai-vnc.py    # Full CLI with sessions & SSH tunneling
+├── shadow-ai-vnc-fixed.py  # Enhanced version with fixes
+├── vncctl.py         # VNC control utility
 ├── requirements.txt    # Dependencies
 ├── setup.py           # Package setup
+├── LICENSE            # MIT License
 └── README.md          # This file
 ```
