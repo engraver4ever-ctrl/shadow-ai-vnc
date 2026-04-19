@@ -4,6 +4,8 @@ shadow-ai-vnc - Headless VNC client for AI agents
 A CLI tool to connect to VNC servers, capture screens, and send inputs.
 Designed for OpenClaw and other AI agent systems.
 Supports SSH tunneling and persistent sessions.
+
+Uses vncdotool Python API (not CLI) for better compatibility.
 """
 
 import argparse
@@ -20,6 +22,7 @@ from pathlib import Path
 from typing import Optional, Tuple
 
 import paramiko
+from vncdotool import api
 
 
 SESSION_DIR = Path(tempfile.gettempdir()) / "shadow-ai-vnc"
@@ -92,7 +95,6 @@ class SSHTunnel:
             self._client = paramiko.SSHClient()
             self._client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
             
-            # Connect via SSH
             connect_kwargs = {
                 'hostname': self.config.ssh_host,
                 'port': self.config.ssh_port,
@@ -107,7 +109,6 @@ class SSHTunnel:
             
             self._client.connect(**connect_kwargs)
             
-            # Find available local port
             if self.config.local_port == 0:
                 with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
                     s.bind(('', 0))
@@ -115,7 +116,6 @@ class SSHTunnel:
             else:
                 self.local_port = self.config.local_port
             
-            # Create reverse port forward: localhost:LOCAL_PORT -> remote:5900
             transport = self._client.get_transport()
             transport.request_port_forward('', self.local_port)
             
@@ -140,58 +140,44 @@ class SSHTunnel:
 
 
 class VNCController:
-    """Headless VNC controller for AI agents - uses vncdotool CLI."""
+    """Headless VNC controller for AI agents - uses vncdotool Python API."""
     
     def __init__(self, conn: VNCConnection, ssh_config: Optional[SSHConfig] = None):
         self.conn = conn
         self.ssh_config = ssh_config
         self._ssh_tunnel: Optional[SSHTunnel] = None
-    
-    def _build_vncdotool_args(self, *command) -> list:
-        """Build vncdotool command args."""
-        args = ["vncdotool", "-s", f"{self.conn.host}::{self.conn.port}"]
-        
-        if self.conn.password:
-            args.extend(["-p", self.conn.password])
-        
-        for cmd in command:
-            args.append(cmd)
-        
-        return args
+        self._client = None
     
     def connect(self) -> ActionResult:
-        """Establish VNC connection (verify connectivity)."""
+        """Establish VNC connection using Python API."""
         try:
-            # Start SSH tunnel if configured
             if self.ssh_config:
                 self._ssh_tunnel = SSHTunnel(self.ssh_config)
                 success, msg = self._ssh_tunnel.start()
                 if not success:
                     return ActionResult(success=False, action="ssh_tunnel", error=msg)
             
-            # Try a simple command to verify connection
-            result = subprocess.run(
-                self._build_vncdotool_args("capture", "/dev/null"),
-                capture_output=True,
-                timeout=self.conn.timeout
-            )
+            # Use Python API instead of CLI
+            server = f"{self.conn.host}::{self.conn.port}"
+            self._client = api.connect(server, password=self.conn.password)
             
-            if result.returncode != 0:
-                return ActionResult(
-                    success=False,
-                    action="connect",
-                    error=result.stderr.decode() or "Connection failed"
-                )
+            # Wait for connection to establish
+            self._client.connect(timeout=self.conn.timeout)
             
             return ActionResult(success=True, action="connect")
             
-        except subprocess.TimeoutExpired:
-            return ActionResult(success=False, action="connect", error="Connection timeout")
         except Exception as e:
             return ActionResult(success=False, action="connect", error=str(e))
     
     def disconnect(self) -> ActionResult:
         """Close VNC connection."""
+        if self._client:
+            try:
+                self._client.disconnect()
+            except Exception:
+                pass
+            self._client = None
+        
         if self._ssh_tunnel:
             self._ssh_tunnel.stop()
             self._ssh_tunnel = None
@@ -200,23 +186,15 @@ class VNCController:
     
     def screenshot(self, output_path: str) -> ScreenshotResult:
         """Capture screen and save to file."""
+        if not self._client:
+            return ScreenshotResult(success=False, error="Not connected")
+        
         try:
             path = Path(output_path)
             path.parent.mkdir(parents=True, exist_ok=True)
             
-            result = subprocess.run(
-                self._build_vncdotool_args("capture", str(path)),
-                capture_output=True,
-                timeout=self.conn.timeout + 10
-            )
+            self._client.captureScreen(str(path))
             
-            if result.returncode != 0:
-                return ScreenshotResult(
-                    success=False,
-                    error=result.stderr.decode() or "Capture failed"
-                )
-            
-            # Get dimensions
             from PIL import Image
             with Image.open(path) as img:
                 width, height = img.size
@@ -228,83 +206,51 @@ class VNCController:
                 height=height
             )
             
-        except subprocess.TimeoutExpired:
-            return ScreenshotResult(success=False, error="Screenshot timeout")
         except Exception as e:
             return ScreenshotResult(success=False, error=str(e))
     
     def send_key(self, key: str) -> ActionResult:
         """Send a key press."""
+        if not self._client:
+            return ActionResult(success=False, action=f"key:{key}", error="Not connected")
+        
         try:
-            result = subprocess.run(
-                self._build_vncdotool_args("key", key),
-                capture_output=True,
-                timeout=10
-            )
-            
-            if result.returncode != 0:
-                return ActionResult(success=False, action=f"key:{key}", 
-                                  error=result.stderr.decode())
-            
+            self._client.keyPress(key)
             return ActionResult(success=True, action=f"key:{key}")
         except Exception as e:
             return ActionResult(success=False, action=f"key:{key}", error=str(e))
     
     def send_text(self, text: str) -> ActionResult:
         """Type text string."""
+        if not self._client:
+            return ActionResult(success=False, action="type", error="Not connected")
+        
         try:
-            result = subprocess.run(
-                self._build_vncdotool_args("type", text),
-                capture_output=True,
-                timeout=30
-            )
-            
-            if result.returncode != 0:
-                return ActionResult(success=False, action="type", 
-                                  error=result.stderr.decode())
-            
+            self._client.typeText(text)
             return ActionResult(success=True, action="type")
         except Exception as e:
             return ActionResult(success=False, action="type", error=str(e))
     
     def mouse_click(self, x: int, y: int, button: int = 1) -> ActionResult:
         """Click at coordinates (1=left, 2=middle, 3=right)."""
+        if not self._client:
+            return ActionResult(success=False, action="mouse_click", error="Not connected")
+        
         try:
-            # Move first, then click
-            subprocess.run(
-                self._build_vncdotool_args("move", str(x), str(y)),
-                capture_output=True,
-                timeout=10
-            )
-            
-            button_name = {1: "left", 2: "mid", 3: "right"}[button]
-            result = subprocess.run(
-                self._build_vncdotool_args("click", button_name),
-                capture_output=True,
-                timeout=10
-            )
-            
-            if result.returncode != 0:
-                return ActionResult(success=False, action="mouse_click", 
-                                  error=result.stderr.decode())
-            
+            self._client.mouseMove(x, y)
+            # Map button: 1=left, 2=middle, 3=right
+            self._client.mousePress(button)
             return ActionResult(success=True, action="mouse_click")
         except Exception as e:
             return ActionResult(success=False, action="mouse_click", error=str(e))
     
     def mouse_move(self, x: int, y: int) -> ActionResult:
         """Move mouse to coordinates."""
+        if not self._client:
+            return ActionResult(success=False, action="mouse_move", error="Not connected")
+        
         try:
-            result = subprocess.run(
-                self._build_vncdotool_args("move", str(x), str(y)),
-                capture_output=True,
-                timeout=10
-            )
-            
-            if result.returncode != 0:
-                return ActionResult(success=False, action="mouse_move", 
-                                  error=result.stderr.decode())
-            
+            self._client.mouseMove(x, y)
             return ActionResult(success=True, action="mouse_move")
         except Exception as e:
             return ActionResult(success=False, action="mouse_move", error=str(e))
@@ -329,13 +275,13 @@ def _get_session_path(session_id: str) -> Path:
 def _load_session(session_id: str) -> Optional[VNCSession]:
     """Load session from disk."""
     path = _get_session_path(session_id)
-    if path.exists():
-        try:
-            with open(path, 'rb') as f:
-                return pickle.load(f)
-        except Exception:
-            return None
-    return None
+    if not path.exists():
+        return None
+    try:
+        with open(path, 'rb') as f:
+            return pickle.load(f)
+    except Exception:
+        return None
 
 
 def _save_session(session: VNCSession) -> None:
@@ -345,386 +291,152 @@ def _save_session(session: VNCSession) -> None:
         pickle.dump(session, f)
 
 
-def _delete_session(session_id: str) -> None:
-    """Delete session file."""
-    path = _get_session_path(session_id)
-    if path.exists():
-        path.unlink()
-
-
-def _build_connection(args) -> Tuple[VNCConnection, Optional[SSHConfig]]:
-    """Build connection config from args."""
-    vnc_conn = VNCConnection(
+def cmd_connect(args) -> None:
+    """Connect to VNC server."""
+    conn = VNCConnection(
         host=args.host,
-        port=args.port,
-        password=args.password,
-        timeout=args.timeout
+        port=args.port or 5900,
+        password=args.password or os.environ.get('VNC_PASSWORD')
     )
     
     ssh_config = None
-    if args.ssh_host:
+    if args.ssh:
         ssh_config = SSHConfig(
-            ssh_host=args.ssh_host,
-            ssh_port=args.ssh_port or 22,
-            ssh_user=args.ssh_user or "root",
+            ssh_host=args.ssh,
+            ssh_user=args.ssh_user or 'root',
             ssh_key_file=args.ssh_key,
-            ssh_password=args.ssh_password,
-            local_port=args.ssh_local_port or 0
+            ssh_password=args.ssh_password
         )
     
-    return vnc_conn, ssh_config
-
-
-def cmd_connect(args) -> int:
-    """Connect to VNC server and persist session."""
-    vnc_conn, ssh_config = _build_connection(args)
+    controller = VNCController(conn, ssh_config)
+    result = controller.connect()
     
-    ctl = VNCController(vnc_conn, ssh_config)
-    result = ctl.connect()
-    
-    if result.success:
-        # Create and save session
-        import uuid
-        session_id = str(uuid.uuid4())[:8]
+    if result.success and args.session:
         session = VNCSession(
-            session_id=session_id,
-            host=args.host,
-            port=args.port,
-            vnc_password=args.password,
+            session_id=args.session,
+            host=conn.host,
+            port=conn.port,
+            vnc_password=conn.password,
             ssh_config=ssh_config
         )
-        
-        if ctl._ssh_tunnel:
-            session.ssh_tunnel = {
-                "local_port": ctl._ssh_tunnel.local_port,
-                "pid": ctl._ssh_tunnel.pid
-            }
-        
         _save_session(session)
-        
-        output_json({
-            "success": True,
-            "session_id": session_id,
-            "host": args.host,
-            "port": args.port,
-            "ssh_tunnel": session.ssh_tunnel is not None,
-            "message": f"Connected. Use --session {session_id} for subsequent commands."
-        })
-        return 0
+        output_json({"action": "connect", "success": True, "session_id": args.session})
     else:
-        output_json({
-            "success": False,
-            "error": result.error
-        })
-        return 1
+        output_json({"action": "connect", "success": result.success, "error": result.error})
 
 
-def cmd_screenshot(args) -> int:
-    """Capture screenshot."""
-    vnc_conn, ssh_config = _build_connection(args)
+def cmd_session(args) -> None:
+    """Execute command in existing session."""
+    session = _load_session(args.session)
+    if not session:
+        output_json({"error": f"Session {args.session} not found"})
+        return
     
-    ctl = VNCController(vnc_conn, ssh_config)
-    result = ctl.connect()
+    conn = VNCConnection(
+        host=session.host,
+        port=session.port,
+        password=session.vnc_password
+    )
     
-    if not result.success:
-        output_json({"success": False, "error": result.error})
-        return 1
+    ssh_config = session.ssh_config
+    controller = VNCController(conn, ssh_config)
     
-    try:
-        result = ctl.screenshot(args.output)
-        output_json(asdict(result))
-        return 0 if result.success else 1
-    finally:
-        ctl.disconnect()
+    if args.command == 'screenshot':
+        result = controller.screenshot(args.output)
+        output_json({"action": "screenshot", "success": result.success, 
+                    "path": result.path, "width": result.width, "height": result.height,
+                    "error": result.error})
+    elif args.command == 'key':
+        result = controller.send_key(args.key)
+        output_json({"action": f"key:{args.key}", "success": result.success, "error": result.error})
+    elif args.command == 'type':
+        result = controller.send_text(args.text)
+        output_json({"action": "type", "success": result.success, "error": result.error})
+    elif args.command == 'click':
+        result = controller.mouse_click(args.x, args.y)
+        output_json({"action": "mouse_click", "success": result.success, "error": result.error})
+    elif args.command == 'move':
+        result = controller.mouse_move(args.x, args.y)
+        output_json({"action": "mouse_move", "success": result.success, "error": result.error})
+    
+    controller.disconnect()
 
 
-def cmd_key(args) -> int:
-    """Send key press."""
-    vnc_conn, ssh_config = _build_connection(args)
-    
-    ctl = VNCController(vnc_conn, ssh_config)
-    result = ctl.connect()
-    
-    if not result.success:
-        output_json({"success": False, "error": result.error})
-        return 1
-    
-    try:
-        result = ctl.send_key(args.key)
-        output_json(asdict(result))
-        return 0 if result.success else 1
-    finally:
-        ctl.disconnect()
-
-
-def cmd_type(args) -> int:
-    """Type text."""
-    vnc_conn, ssh_config = _build_connection(args)
-    
-    ctl = VNCController(vnc_conn, ssh_config)
-    result = ctl.connect()
-    
-    if not result.success:
-        output_json({"success": False, "error": result.error})
-        return 1
-    
-    try:
-        result = ctl.send_text(args.text)
-        output_json(asdict(result))
-        return 0 if result.success else 1
-    finally:
-        ctl.disconnect()
-
-
-def cmd_click(args) -> int:
-    """Mouse click."""
-    vnc_conn, ssh_config = _build_connection(args)
-    
-    ctl = VNCController(vnc_conn, ssh_config)
-    result = ctl.connect()
-    
-    if not result.success:
-        output_json({"success": False, "error": result.error})
-        return 1
-    
-    try:
-        result = ctl.mouse_click(args.x, args.y, args.button)
-        output_json(asdict(result))
-        return 0 if result.success else 1
-    finally:
-        ctl.disconnect()
-
-
-def cmd_move(args) -> int:
-    """Mouse move."""
-    vnc_conn, ssh_config = _build_connection(args)
-    
-    ctl = VNCController(vnc_conn, ssh_config)
-    result = ctl.connect()
-    
-    if not result.success:
-        output_json({"success": False, "error": result.error})
-        return 1
-    
-    try:
-        result = ctl.mouse_move(args.x, args.y)
-        output_json(asdict(result))
-        return 0 if result.success else 1
-    finally:
-        ctl.disconnect()
-
-
-def cmd_session(args) -> int:
-    """Session management commands."""
-    if args.session_command == "list":
-        sessions = []
-        for f in _ensure_session_dir().glob("*.pkl"):
-            try:
-                with open(f, 'rb') as fp:
-                    s = pickle.load(fp)
-                    s.last_used = os.path.getatime(f)
-                    sessions.append({
-                        "session_id": s.session_id,
-                        "host": s.host,
-                        "port": s.port,
-                        "has_ssh": s.ssh_config is not None,
-                        "last_used": s.last_used
-                    })
-            except Exception:
-                pass
-        
-        sessions.sort(key=lambda x: x["last_used"], reverse=True)
-        output_json({"sessions": sessions})
-        return 0
-    
-    elif args.session_command == "delete":
-        _delete_session(args.session_id)
-        output_json({"success": True, "message": f"Session {args.session_id} deleted"})
-        return 0
-    
-    elif args.session_command == "status":
-        session = _load_session(args.session_id)
+def cmd_list(args) -> None:
+    """List active sessions."""
+    _ensure_session_dir()
+    sessions = []
+    for path in SESSION_DIR.glob("*.pkl"):
+        session = _load_session(path.stem)
         if session:
-            output_json({
-                "success": True,
-                "session": {
-                    "session_id": session.session_id,
-                    "host": session.host,
-                    "port": session.port,
-                    "has_ssh": session.ssh_config is not None,
-                    "created_at": session.created_at,
-                    "last_used": session.last_used
-                }
+            sessions.append({
+                "session_id": session.session_id,
+                "host": session.host,
+                "port": session.port,
+                "created_at": session.created_at,
+                "last_used": session.last_used
             })
-            return 0
-        else:
-            output_json({"success": False, "error": "Session not found"})
-            return 1
+    output_json({"sessions": sessions})
+
+
+def cmd_delete(args) -> None:
+    """Delete a session."""
+    path = _get_session_path(args.session)
+    if path.exists():
+        path.unlink()
+        output_json({"action": "delete", "success": True, "session": args.session})
+    else:
+        output_json({"action": "delete", "success": False, "error": "Session not found"})
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="shadow-ai-vnc - Headless VNC client for AI agents"
-    )
-    
-    # Global connection args
-    parser.add_argument(
-        "--host",
-        help="VNC server hostname or IP"
-    )
-    parser.add_argument(
-        "--port", type=int, default=5900,
-        help="VNC server port (default: 5900)"
-    )
-    parser.add_argument(
-        "--password",
-        help="VNC password"
-    )
-    parser.add_argument(
-        "--password-file",
-        help="File containing VNC password"
-    )
-    parser.add_argument(
-        "--timeout", type=float, default=30.0,
-        help="Connection timeout (default: 30s)"
-    )
-    parser.add_argument(
-        "--session",
-        help="Session ID to use (loads saved connection config)"
-    )
-    
-    # SSH tunnel args
-    ssh_group = parser.add_argument_group("SSH Tunnel Options")
-    ssh_group.add_argument(
-        "--ssh-host",
-        help="SSH server for tunnel (e.g., user@bastion.host)"
-    )
-    ssh_group.add_argument(
-        "--ssh-port", type=int, default=22,
-        help="SSH port (default: 22)"
-    )
-    ssh_group.add_argument(
-        "--ssh-user",
-        default="root",
-        help="SSH username (default: root)"
-    )
-    ssh_group.add_argument(
-        "--ssh-key",
-        help="SSH private key file"
-    )
-    ssh_group.add_argument(
-        "--ssh-password",
-        help="SSH password"
-    )
-    ssh_group.add_argument(
-        "--ssh-local-port", type=int, default=0,
-        help="Local port for tunnel (0=auto, default: auto)"
-    )
-    
-    subparsers = parser.add_subparsers(dest="command", required=True)
+    parser = argparse.ArgumentParser(description="shadow-ai-vnc: Headless VNC client for AI agents")
+    subparsers = parser.add_subparsers(dest='command', help='Commands')
     
     # connect command
-    connect_parser = subparsers.add_parser("connect", help="Connect and persist session")
+    connect_parser = subparsers.add_parser('connect', help='Connect to VNC server')
+    connect_parser.add_argument('-s', '--host', required=True, help='VNC server host')
+    connect_parser.add_argument('-p', '--port', type=int, help='VNC port (default: 5900)')
+    connect_parser.add_argument('-P', '--password', help='VNC password')
+    connect_parser.add_argument('--ssh', help='SSH tunnel host')
+    connect_parser.add_argument('--ssh-user', help='SSH user')
+    connect_parser.add_argument('--ssh-key', help='SSH key file')
+    connect_parser.add_argument('--ssh-password', help='SSH password')
+    connect_parser.add_argument('--session', help='Save session with ID')
     connect_parser.set_defaults(func=cmd_connect)
     
-    # screenshot command
-    screenshot_parser = subparsers.add_parser(
-        "screenshot",
-        help="Capture screen and save to file"
-    )
-    screenshot_parser.add_argument(
-        "--output", "-o", required=True,
-        help="Output file path (PNG)"
-    )
-    screenshot_parser.set_defaults(func=cmd_screenshot)
-    
-    # key command
-    key_parser = subparsers.add_parser("key", help="Send key press")
-    key_parser.add_argument("key", help="Key to press (e.g., 'ctrl', 'Return')")
-    key_parser.set_defaults(func=cmd_key)
-    
-    # type command
-    type_parser = subparsers.add_parser("type", help="Type text string")
-    type_parser.add_argument("text", help="Text to type")
-    type_parser.set_defaults(func=cmd_type)
-    
-    # click command
-    click_parser = subparsers.add_parser("click", help="Mouse click")
-    click_parser.add_argument("x", type=int, help="X coordinate")
-    click_parser.add_argument("y", type=int, help="Y coordinate")
-    click_parser.add_argument(
-        "--button", "-b", type=int, default=1,
-        choices=[1, 2, 3],
-        help="Mouse button: 1=left, 2=middle, 3=right"
-    )
-    click_parser.set_defaults(func=cmd_click)
-    
-    # move command
-    move_parser = subparsers.add_parser("move", help="Mouse move")
-    move_parser.add_argument("x", type=int, help="X coordinate")
-    move_parser.add_argument("y", type=int, help="Y coordinate")
-    move_parser.set_defaults(func=cmd_move)
-    
     # session command
-    session_parser = subparsers.add_parser(
-        "session",
-        help="Manage persistent sessions"
-    )
-    session_subparsers = session_parser.add_subparsers(
-        dest="session_command",
-        required=True
-    )
+    session_parser = subparsers.add_parser('session', help='Run command in session')
+    session_parser.add_argument('session', help='Session ID')
+    session_parser.add_argument('command', choices=['screenshot', 'key', 'type', 'click', 'move'])
+    session_parser.add_argument('--output', help='Screenshot output path')
+    session_parser.add_argument('--key', help='Key to press')
+    session_parser.add_argument('--text', help='Text to type')
+    session_parser.add_argument('x', nargs='?', type=int, help='X coordinate')
+    session_parser.add_argument('y', nargs='?', type=int, help='Y coordinate')
+    session_parser.set_defaults(func=cmd_session)
     
-    session_list = session_subparsers.add_parser(
-        "list",
-        help="List all sessions"
-    )
-    session_list.set_defaults(func=lambda a: cmd_session(a))
+    # list command
+    list_parser = subparsers.add_parser('list', help='List sessions')
+    list_parser.set_defaults(func=cmd_list)
     
-    session_delete = session_subparsers.add_parser(
-        "delete",
-        help="Delete a session"
-    )
-    session_delete.add_argument("session_id", help="Session ID to delete")
-    session_delete.set_defaults(func=lambda a: cmd_session(a))
-    
-    session_status = session_subparsers.add_parser(
-        "status",
-        help="Show session status"
-    )
-    session_status.add_argument("session_id", help="Session ID to check")
-    session_status.set_defaults(func=lambda a: cmd_session(a))
+    # delete command
+    delete_parser = subparsers.add_parser('delete', help='Delete session')
+    delete_parser.add_argument('session', help='Session ID')
+    delete_parser.set_defaults(func=cmd_delete)
     
     args = parser.parse_args()
     
-    # Handle session-based connection
-    if args.session:
-        session = _load_session(args.session)
-        if not session:
-            output_json({"success": False, "error": f"Session {args.session} not found"})
-            return 1
-        
-        # Override args with session config
-        args.host = session.host
-        args.port = session.port
-        args.password = session.vnc_password
-        if session.ssh_config:
-            args.ssh_host = session.ssh_config.ssh_host
-            args.ssh_port = session.ssh_config.ssh_port
-            args.ssh_user = session.ssh_config.ssh_user
-            args.ssh_key = session.ssh_config.ssh_key_file
-            args.ssh_password = session.ssh_config.ssh_password
-            args.ssh_local_port = session.ssh_config.local_port
-        
-        # Update last_used
-        Path(_get_session_path(args.session)).touch()
+    if not args.command:
+        parser.print_help()
+        sys.exit(1)
     
-    # Load password from file if specified
-    if args.password_file:
-        args.password = Path(args.password_file).read_text().strip()
+    # Set defaults from environment
+    if hasattr(args, 'password') and not args.password:
+        args.password = os.environ.get('VNC_PASSWORD')
     
-    return args.func(args)
+    args.func(args)
 
 
-if __name__ == "__main__":
-    sys.exit(main())
+if __name__ == '__main__':
+    main()
