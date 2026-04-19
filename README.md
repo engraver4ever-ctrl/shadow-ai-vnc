@@ -185,7 +185,7 @@ vnc_click(100, 200, 3)  # right click
 
 ## Files
 
-- `shadow-ai-vnc.py` — Full CLI with sessions & SSH tunneling
+- `shadow_ai_vnc.py` — Full CLI with sessions & SSH tunneling
 - `vnc_skill.py` — Lightweight OpenClaw skill wrapper (no extra deps)
 - `vncctl.py` — VNC control utility
 

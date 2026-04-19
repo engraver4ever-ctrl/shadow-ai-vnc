@@ -49,13 +49,13 @@ jobs:
       - name: Build binary (Unix)
         if: matrix.os != 'windows-latest'
         run: |
-          pyinstaller --onefile --name shadow-ai-vnc shadow-ai-vnc.py
+          pyinstaller --onefile --name shadow-ai-vnc shadow_ai_vnc.py
           tar czf shadow-ai-vnc-${{ matrix.os }}.tar.gz dist/shadow-ai-vnc
       
       - name: Build binary (Windows)
         if: matrix.os == 'windows-latest'
         run: |
-          pyinstaller --onefile --name shadow-ai-vnc.exe shadow-ai-vnc.py
+          pyinstaller --onefile --name shadow-ai-vnc.exe shadow_ai_vnc.py
           Compress-Archive -Path dist/shadow-ai-vnc.exe -Destination shadow-ai-vnc-windows.zip
       
       - name: Upload artifact

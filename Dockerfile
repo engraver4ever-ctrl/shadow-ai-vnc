@@ -7,14 +7,14 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application
-COPY shadow-ai-vnc.py /app/
+COPY shadow_ai_vnc.py /app/
 COPY vnc_skill.py /app/
 
 # Make scripts executable
-RUN chmod +x /app/shadow-ai-vnc.py /app/vnc_skill.py
+RUN chmod +x /app/shadow_ai_vnc.py /app/vnc_skill.py
 
 # Create symlinks for easy access
-RUN ln -s /app/shadow-ai-vnc.py /usr/local/bin/shadow-ai-vnc \
+RUN ln -s /app/shadow_ai_vnc.py /usr/local/bin/shadow-ai-vnc \
     && ln -s /app/vnc_skill.py /usr/local/bin/shadow-ai-vnc-skill
 
 ENTRYPOINT ["shadow-ai-vnc"]

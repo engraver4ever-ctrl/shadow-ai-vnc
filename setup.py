@@ -14,7 +14,7 @@ setup(
     ],
     entry_points={
         "console_scripts": [
-            "shadow-ai-vnc=shadow-ai-vnc:main",
+            "shadow-ai-vnc=shadow_ai_vnc:main",
         ],
     },
     python_requires=">=3.8",
