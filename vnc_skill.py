@@ -37,21 +37,43 @@ def run_vncdotool(*args):
         "stderr": result.stderr.decode() if result.stderr else None
     }
 
-def vnc_screenshot(output_path: str) -> dict:
-    """Capture screenshot and return metadata."""
+def vnc_screenshot(output_path: str, scale: float = 1.0) -> dict:
+    """Capture screenshot and return metadata.
+    
+    Args:
+        output_path: Where to save the screenshot
+        scale: Scale factor for upscaling (1.0=native, 2.0=2x)
+               Useful for OCR on low-res VNC servers.
+    """
     result = run_vncdotool("capture", output_path)
     
     if result["success"] and os.path.exists(output_path):
         try:
             from PIL import Image
             with Image.open(output_path) as img:
-                width, height = img.size
-            return {
+                orig_width, orig_height = img.size
+                
+                # Apply scaling if requested
+                if scale != 1.0:
+                    new_size = (int(orig_width * scale), int(orig_height * scale))
+                    # NEAREST keeps text sharp when upscaling
+                    img = img.resize(new_size, Image.NEAREST if scale >= 2.0 else Image.LANCZOS)
+                    img.save(output_path)
+                    width, height = new_size
+                else:
+                    width, height = orig_width, orig_height
+            
+            out = {
                 "success": True,
                 "path": str(Path(output_path).absolute()),
                 "width": width,
                 "height": height
             }
+            if scale != 1.0:
+                out["original_size"] = f"{orig_width}x{orig_height}"
+                out["scaled_size"] = f"{width}x{height}"
+                out["scale"] = scale
+            return out
         except Exception as e:
             return {"success": False, "error": str(e)}
     
@@ -100,7 +122,8 @@ if __name__ == "__main__":
     cmd = sys.argv[1]
     
     if cmd == "screenshot":
-        result = vnc_screenshot(sys.argv[2] if len(sys.argv) > 2 else "/tmp/vnc_screenshot.png")
+        scale = float(sys.argv[3]) if len(sys.argv) > 3 else 1.0
+        result = vnc_screenshot(sys.argv[2] if len(sys.argv) > 2 else "/tmp/vnc_screenshot.png", scale=scale)
     elif cmd == "key":
         result = vnc_key(sys.argv[2] if len(sys.argv) > 2 else "Return")
     elif cmd == "type":
