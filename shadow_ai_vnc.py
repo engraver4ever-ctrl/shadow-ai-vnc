@@ -286,24 +286,52 @@ class VNCController:
             return ScreenshotResult(success=False, error=str(e))
     
     def send_key(self, key: str) -> ActionResult:
-        """Send a key press."""
+        """Send a key press.
+        
+        Note: vncdotool uses lowercase key names (e.g., 'return' not 'Return').
+        Common keys: return, enter, esc, tab, delete, home, end, pgup, pgdn,
+        left, up, right, down, space, plus combinations like ctrl-c, alt-f4.
+        """
         if not self._client:
             return ActionResult(success=False, action=f"key:{key}", error="Not connected")
         
         try:
-            self._client.keyPress(key)
+            # vncdotool keyPress expects lowercase keys
+            # Map common uppercase names to lowercase
+            key_map = {
+                'Return': 'return', 'Enter': 'enter', 'Escape': 'esc',
+                'Tab': 'tab', 'Delete': 'delete', 'BackSpace': 'bsp',
+                'Home': 'home', 'End': 'end', 'Page_Up': 'pgup', 'Page_Down': 'pgdn',
+                'Left': 'left', 'Right': 'right', 'Up': 'up', 'Down': 'down',
+                'Space': 'space', 'F1': 'f1', 'F2': 'f2', 'F3': 'f3', 'F4': 'f4',
+                'F5': 'f5', 'F6': 'f6', 'F7': 'f7', 'F8': 'f8', 'F9': 'f9',
+                'F10': 'f10', 'F11': 'f11', 'F12': 'f12',
+            }
+            mapped_key = key_map.get(key, key)
+            self._client.keyPress(mapped_key)
             return ActionResult(success=True, action=f"key:{key}")
         except Exception as e:
             return ActionResult(success=False, action=f"key:{key}", error=str(e))
     
     def send_text(self, text: str) -> ActionResult:
-        """Type text string."""
+        """Type text string using vncdotool CLI for compatibility."""
         if not self._client:
             return ActionResult(success=False, action="type", error="Not connected")
         
         try:
-            self._client.typeText(text)
-            return ActionResult(success=True, action="type")
+            # Use vncdotool CLI for type command (more reliable than Python API)
+            cmd = [
+                "vncdotool", "-s", f"{self.conn.host}::{self.conn.port}",
+                "-p", str(self.conn.password or ""), "-t", str(int(self.conn.timeout))
+            ]
+            cmd.extend(["type", text])
+            
+            result = subprocess.run(cmd, capture_output=True, timeout=self.conn.timeout + 10)
+            if result.returncode == 0:
+                return ActionResult(success=True, action="type")
+            else:
+                err = result.stderr.decode() if result.stderr else "Type command failed"
+                return ActionResult(success=False, action="type", error=err)
         except Exception as e:
             return ActionResult(success=False, action="type", error=str(e))
     
@@ -618,37 +646,44 @@ def cmd_session(args) -> None:
     conn = VNCConnection(host=session.host, port=session.port, password=session.vnc_password)
     controller = VNCController(conn, session.ssh_config)
     
-    subcmd = args.session_command
-    if subcmd == 'screenshot':
-        result = controller.screenshot(args.output, scale=getattr(args, 'scale', 1.0) or 1.0)
-        out = {"success": result.success, "path": result.path,
-               "width": result.width, "height": result.height}
-        if result.original_width:
-            out["original_size"] = f"{result.original_width}x{result.original_height}"
-            out["scaled_size"] = f"{result.width}x{result.height}"
-        if result.error:
-            out["error"] = result.error
-        output_json(out)
-    elif subcmd == 'key':
-        result = controller.send_key(args.key)
-        output_json({"success": result.success, "action": f"key:{args.key}", "error": result.error})
-    elif subcmd == 'type':
-        result = controller.send_text(args.text)
-        output_json({"success": result.success, "action": "type", "error": result.error})
-    elif subcmd == 'click':
-        result = controller.mouse_click(args.x, args.y)
-        output_json({"success": result.success, "action": "click", "x": args.x, "y": args.y})
-    elif subcmd == 'move':
-        result = controller.mouse_move(args.x, args.y)
-        output_json({"success": result.success, "action": "move", "x": args.x, "y": args.y})
-    elif subcmd == 'set-resolution':
-        result = controller.set_resolution(args.width, args.height)
-        output_json({"success": result.success, "action": "set_resolution",
-                    "width": args.width, "height": args.height, "error": result.error})
-    else:
-        output_json({"error": f"Unknown session command: {subcmd}"})
+    # Reconnect using saved session credentials
+    connect_result = controller.connect()
+    if not connect_result.success:
+        output_json({"success": False, "error": f"Reconnection failed: {connect_result.error}"})
+        return
     
-    controller.disconnect()
+    try:
+        subcmd = args.session_command
+        if subcmd == 'screenshot':
+            result = controller.screenshot(args.output, scale=getattr(args, 'scale', 1.0) or 1.0)
+            out = {"success": result.success, "path": result.path,
+                   "width": result.width, "height": result.height}
+            if result.original_width:
+                out["original_size"] = f"{result.original_width}x{result.original_height}"
+                out["scaled_size"] = f"{result.width}x{result.height}"
+            if result.error:
+                out["error"] = result.error
+            output_json(out)
+        elif subcmd == 'key':
+            result = controller.send_key(args.key)
+            output_json({"success": result.success, "action": f"key:{args.key}", "error": result.error})
+        elif subcmd == 'type':
+            result = controller.send_text(args.text)
+            output_json({"success": result.success, "action": "type", "error": result.error})
+        elif subcmd == 'click':
+            result = controller.mouse_click(args.x, args.y)
+            output_json({"success": result.success, "action": "click", "x": args.x, "y": args.y})
+        elif subcmd == 'move':
+            result = controller.mouse_move(args.x, args.y)
+            output_json({"success": result.success, "action": "move", "x": args.x, "y": args.y})
+        elif subcmd == 'set-resolution':
+            result = controller.set_resolution(args.width, args.height)
+            output_json({"success": result.success, "action": "set_resolution",
+                        "width": args.width, "height": args.height, "error": result.error})
+        else:
+            output_json({"error": f"Unknown session command: {subcmd}"})
+    finally:
+        controller.disconnect()
 
 
 def cmd_list(args) -> None:
