@@ -49,13 +49,13 @@ jobs:
       - name: Build binary (Unix)
         if: matrix.os != 'windows-latest'
         run: |
-          pyinstaller --onefile --name shadow-ai-vnc shadow_ai_vnc.py
+          pyinstaller --onefile --name shadow-ai-vnc shadow-ai-vnc.py
           tar czf shadow-ai-vnc-${{ matrix.os }}.tar.gz dist/shadow-ai-vnc
       
       - name: Build binary (Windows)
         if: matrix.os == 'windows-latest'
         run: |
-          pyinstaller --onefile --name shadow-ai-vnc.exe shadow_ai_vnc.py
+          pyinstaller --onefile --name shadow-ai-vnc.exe shadow-ai-vnc.py
           Compress-Archive -Path dist/shadow-ai-vnc.exe -Destination shadow-ai-vnc-windows.zip
       
       - name: Upload artifact
@@ -65,30 +65,3 @@ jobs:
           path: |
             shadow-ai-vnc-*.tar.gz
             shadow-ai-vnc-*.zip
-
-  # Build and push Docker image to GitHub Container Registry
-  docker:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
-    steps:
-      - uses: actions/checkout@v4
-      
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-      
-      - name: Login to GHCR
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      
-      - name: Build and push
-        uses: docker/build-push-action@v5
-        with:
-          push: ${{ startsWith(github.ref, 'refs/tags/') }}
-          tags: |
-            ghcr.io/${{ github.repository }}/shadow-ai-vnc:latest
-            ghcr.io/${{ github.repository }}/shadow-ai-vnc:${{ github.ref_name }}
