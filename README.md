@@ -20,79 +20,105 @@ pip install shadow-ai-vnc
 # From Docker
 docker pull ghcr.io/engraver4ever-ctrl/shadow-ai-vnc:latest
 
-# Clone and install
+# Clone and install (includes asyncio-native RFB client)
 git clone https://github.com/engraver4ever-ctrl/shadow-ai-vnc.git
 cd shadow-ai-vnc
 pip install -e .
 ```
 
-## Usage
+## Features
 
-All commands output JSON for easy parsing by AI agents.
+- **Asyncio-native RFB 3.8 client** — no subprocess overhead, pure Python
+- **Screenshot capture** — PNG, JPEG, WebP with scaling and region support
+- **Input automation** — key presses, text typing, mouse clicks and moves
+- **Session persistence** — reusable connections across commands
+- **SSH tunneling** — connect through bastion hosts
+- **Resolution control** — set VNC server resolution (x11vnc/Xvfb)
+- **OpenClaw integration** — ready-to-use skill wrapper
 
-### Basic Commands
+## Quick Start
 
 ```bash
-# Screenshot
-shadow-ai-vnc --host 192.168.1.100 screenshot --output /tmp/screen.png
+# Screenshot (uses asyncio-native client)
+shadow-ai-vnc -s localhost:5901 screenshot /tmp/screen.png
 
 # Send key
-shadow-ai-vnc --host 192.168.1.100 key Return
-shadow-ai-vnc --host 192.168.1.100 key ctrl-alt-t
+shadow-ai-vnc -s localhost:5901 key Return
 
 # Type text
-shadow-ai-vnc --host 192.168.1.100 type "Hello, World!"
+shadow-ai-vnc -s localhost:5901 type "Hello, World!"
 
-# Mouse click
-shadow-ai-vnc --host 192.168.1.100 click 500 300
-shadow-ai-vnc --host 192.168.1.100 click 500 300 --button 3  # right click
+# Click
+shadow-ai-vnc -s localhost:5901 click 500 300
 
-# Mouse move
-shadow-ai-vnc --host 192.168.1.100 move 100 200
+# Set resolution (x11vnc/Xvfb only)
+shadow-ai-vnc set-resolution 1920 1080
 ```
 
-### Session Persistence
+## Asyncio-Native Client
+
+The package includes a custom asyncio-native RFB 3.8 implementation (`shadow_ai_vnc/` package):
+
+```python
+import asyncio
+from shadow_ai_vnc import VNCClient
+
+async def main():
+    client = VNCClient('localhost:5901', password='secret')
+    await client.connect()
+    
+    # Screenshot
+    result = await client.screenshot(save='/tmp/screen.png')
+    print(f"Captured {result.width}x{result.height}")
+    
+    # Input
+    await client.click(100, 100)
+    await client.type('Hello!')
+    await client.key('Return')
+    
+    await client.disconnect()
+
+asyncio.run(main())
+```
+
+### Supported Commands
+
+| Command | Description |
+|---------|-------------|
+| `screenshot [output]` | Capture screenshot (PNG/JPEG/WEBP) |
+| `click <x> <y>` | Mouse click |
+| `move <x> <y>` | Mouse move |
+| `type <text>` | Type text |
+| `key <key>` | Key press (Return, ctrl-c, etc.) |
+| `scroll <x> <y>` | Scroll wheel |
+| `set-resolution <w> <h>` | Set VNC resolution (x11vnc/Xvfb) |
+
+### Resolution Control
+
+For x11vnc/Xvfb servers, you can change the display resolution:
 
 ```bash
-# Connect and save session (returns session ID)
+# Set to 1920x1080 (default)
+shadow-ai-vnc set-resolution 1920 1080
+
+# Set to 1280x720
+shadow-ai-vnc set-resolution 1280 720
+```
+
+This modifies the systemd service and restarts Xvfb.
+
+## Legacy Client (vncdotool-based)
+
+The original `shadow_ai_vnc_legacy.py` provides session persistence and SSH tunneling via vncdotool:
+
+```bash
+# Session management
 shadow-ai-vnc --host 192.168.1.100 connect
-# Output: {"session_id": "abc123", ...}
-
-# Reuse session for subsequent commands
 shadow-ai-vnc --session abc123 screenshot --output /tmp/screen.png
-shadow-ai-vnc --session abc123 click 500 300
 
-# List sessions
-shadow-ai-vnc session list
-
-# Check session status
-shadow-ai-vnc session status abc123
-
-# Delete session
-shadow-ai-vnc session delete abc123
-```
-
-### SSH Tunneling
-
-Connect through an SSH bastion host:
-
-```bash
-# SSH with key auth
-shadow-ai-vnc \
-  --host localhost \
-  --port 5901 \
-  --ssh-host bastion.example.com \
-  --ssh-user ubuntu \
-  --ssh-key ~/.ssh/id_rsa \
-  screenshot --output /tmp/screen.png
-
-# SSH with password auth
-shadow-ai-vnc \
-  --host localhost \
-  --port 5901 \
-  --ssh-host bastion.example.com \
-  --ssh-user ubuntu \
-  --ssh-password secret123 \
+# SSH tunneling
+shadow-ai-vnc --host localhost --port 5901 \
+  --ssh-host bastion.example.com --ssh-user ubuntu \
   screenshot --output /tmp/screen.png
 ```
 
@@ -101,8 +127,6 @@ shadow-ai-vnc \
 ### Requirements
 
 - Python 3.8+
-- `vncdotool>=1.2.0`
-- `Pillow>=10.0.0` (for screenshot metadata)
 - OpenClaw AI assistant
 
 ### Skill Setup
@@ -113,7 +137,7 @@ shadow-ai-vnc \
    ```
 
 2. **Configure OpenClaw skills directory:**
-   Copy `vnc_skill.py` to your OpenClaw skills directory.
+   Copy `skills/vnc/vnc_skill.py` to your OpenClaw skills directory.
 
 3. **Add to TOOLS.md:**
    ```markdown
@@ -129,7 +153,8 @@ shadow-ai-vnc \
    name: vnc
    description: Headless VNC client for screenshots and input
    commands:
-     - screenshot <path>
+     - screenshot <path> [scale]
+     - resolution [WxH]
      - key <key>
      - type <text>
      - click <x> <y>
@@ -138,17 +163,21 @@ shadow-ai-vnc \
      VNC_SERVER: your-vnc-server.com
      VNC_PORT: 5900
      VNC_PASSWORD: your_password
+     VNC_RESOLUTION: 1920x1080
    ```
 
 ### Python API for OpenClaw Agents
 
 ```python
-from vnc_skill import vnc_screenshot, vnc_key, vnc_type, vnc_click, vnc_move
+from vnc_skill import vnc_screenshot, vnc_key, vnc_type, vnc_click, vnc_move, set_resolution
 
 # Capture screenshot
 result = vnc_screenshot("/tmp/screen.png")
 if result["success"]:
-    print(f"Saved to {result['path']}")
+    print(f"Saved to {result['path']} ({result['width']}x{result['height']})")
+
+# Set resolution (x11vnc/Xvfb only)
+result = set_resolution(1920, 1080)
 
 # Send key
 vnc_key("ctrl-alt-t")
@@ -169,6 +198,7 @@ vnc_click(100, 200, 3)  # right click
 | `VNC_PORT` | `5900` | VNC port |
 | `VNC_PASSWORD` | _(required)_ | VNC password |
 | `VNC_TIMEOUT` | `30` | Connection timeout (seconds) |
+| `VNC_RESOLUTION` | `1920x1080` | Default VNC resolution |
 
 ## Supported Keys
 
@@ -177,17 +207,22 @@ vnc_click(100, 200, 3)  # right click
 - **Function:** F1 through F12
 - **Combinations:** ctrl-c, ctrl-alt-t, alt-f4, etc.
 
+## Architecture
+
+- `shadow_ai_vnc/` — Asyncio-native RFB 3.8 client
+  - `transport.py` — Asyncio protocol handler with framebuffer fix
+  - `protocol.py` — RFB message types and data structures
+  - `client.py` — High-level VNCClient API
+  - `cli.py` — CLI interface
+- `shadow_ai_vnc_legacy.py` — vncdotool-based client with sessions & SSH
+- `vnc_skill.py` — OpenClaw skill wrapper
+- `vncctl.py` — VNC control utility
+
 ## Security Notes
 
 - Passwords via `--password` appear in process lists — use `--password-file` or sessions
 - Session files stored in `/tmp/shadow-ai-vnc/` (contains passwords, keep secure)
 - SSH tunnels use `paramiko` — key auth preferred over password
-
-## Files
-
-- `shadow_ai_vnc.py` — Full CLI with sessions & SSH tunneling
-- `vnc_skill.py` — Lightweight OpenClaw skill wrapper (no extra deps)
-- `vncctl.py` — VNC control utility
 
 ## License
 
