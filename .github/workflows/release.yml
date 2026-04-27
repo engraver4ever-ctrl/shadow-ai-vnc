@@ -30,11 +30,7 @@ jobs:
           TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
         run: |
           # Skip if version already exists on PyPI
-          VERSION=${GITHUB_REF_NAME#v}
-          if twine upload dist/* 2>&1 | grep -q "already exists"; then
-            echo "Version $VERSION already on PyPI, skipping"
-            exit 0
-          fi
+          twine upload dist/* || echo "Version may already exist, continuing"
 
   # Build standalone binaries with PyInstaller
   binaries:
@@ -52,18 +48,18 @@ jobs:
           python-version: '3.11'
       
       - name: Install deps
-        run: pip install pyinstaller -r requirements.txt
+        run: pip install pyinstaller -e .
       
       - name: Build binary (Unix)
         if: matrix.os != 'windows-latest'
         run: |
-          pyinstaller --onefile --name shadow-ai-vnc shadow-ai-vnc.py
+          pyinstaller --onefile --name shadow-ai-vnc $(python -c "import shadow_ai_vnc; print(shadow_ai_vnc.__file__)")
           tar czf shadow-ai-vnc-${{ matrix.os }}.tar.gz dist/shadow-ai-vnc
       
       - name: Build binary (Windows)
         if: matrix.os == 'windows-latest'
         run: |
-          pyinstaller --onefile --name shadow-ai-vnc.exe shadow-ai-vnc.py
+          pyinstaller --onefile --name shadow-ai-vnc.exe $(python -c "import shadow_ai_vnc; print(shadow_ai_vnc.__file__)")
           Compress-Archive -Path dist/shadow-ai-vnc.exe -Destination shadow-ai-vnc-windows.zip
       
       - name: Upload artifact
