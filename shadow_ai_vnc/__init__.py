@@ -1,6 +1,6 @@
 """shadow-ai-vnc: asyncio-native RFB 3.8 client for AI agents"""
 
-__version__ = "2.0.0-dev"
+__version__ = "0.3.0"
 __author__ = "Pantera"
 
 from .protocol import SecurityType, Encoding, PixelFormat
