@@ -6,7 +6,7 @@
 
 Headless VNC client designed for AI agents and automation. Provides a clean CLI interface for connecting to VNC servers, capturing screenshots, and sending input commands — with SSH tunneling and session persistence.
 
-**Built for [OpenClaw](https://github.com/openclaw/openclaw)** — includes a ready-to-use skill wrapper.
+**Compatible with [OpenClaw](https://github.com/openclaw/openclaw) and [Hermes Agent](https://hermes-agent.nousresearch.com/)** — includes ready-to-use skill wrappers for both platforms.
 
 ## Installation
 
@@ -35,6 +35,7 @@ pip install -e .
 - **SSH tunneling** — connect through bastion hosts
 - **Resolution control** — set VNC server resolution (x11vnc/Xvfb)
 - **OpenClaw integration** — ready-to-use skill wrapper
+- **Hermes Agent integration** — skill wrapper with config support
 
 ## Quick Start
 
@@ -124,6 +125,8 @@ shadow-ai-vnc --host localhost --port 5901 \
 
 ## OpenClaw Integration
 
+[OpenClaw](https://github.com/openclaw/openclaw) is a multi-provider AI assistant framework.
+
 ### Requirements
 
 - Python 3.8+
@@ -200,6 +203,47 @@ vnc_click(100, 200, 3)  # right click
 | `VNC_TIMEOUT` | `30` | Connection timeout (seconds) |
 | `VNC_RESOLUTION` | `1920x1080` | Default VNC resolution |
 
+## Hermes Agent Integration
+
+[Hermes Agent](https://hermes-agent.nousresearch.com/) is a self-improving AI agent by Nous Research with a built-in learning loop.
+
+### Skill Setup
+
+1. **Install the package:**
+   ```bash
+   pip install shadow-ai-vnc
+   ```
+
+2. **Copy the skill to your Hermes skills directory:**
+   ```bash
+   cp -r skills/vnc-hermes/ ~/.config/hermes/skills/
+   ```
+
+3. **Configure via Hermes config:**
+   ```bash
+   hermes config set vnc.server "your-vnc-server.com"
+   hermes config set vnc.port "5900"
+   hermes config set vnc.password "your_password"
+   ```
+
+4. **Or set environment variables:**
+   ```bash
+   export VNC_SERVER="your-vnc-server.com"
+   export VNC_PORT="5900"
+   export VNC_PASSWORD="your_password"
+   ```
+
+The skill auto-loads when terminal tools are available. Hermes will use `shadow-ai-vnc` CLI commands via the terminal toolset.
+
+### Skill Features
+
+- **Auto-discovery** — loads when `terminal` toolset and `exec` tool are available
+- **Config integration** — uses Hermes config system for server settings
+- **Platform-aware** — only loads on Linux (where VNC servers typically run)
+- **Documentation** — built-in procedures, pitfalls, and verification steps
+
+See `skills/vnc-hermes/SKILL.md` for full details.
+
 ## Supported Keys
 
 - **Basic:** Return, Enter, Escape, Tab, BackSpace, Delete
@@ -215,7 +259,8 @@ vnc_click(100, 200, 3)  # right click
   - `client.py` — High-level VNCClient API
   - `cli.py` — CLI interface
 - `shadow_ai_vnc_legacy.py` — vncdotool-based client with sessions & SSH
-- `vnc_skill.py` — OpenClaw skill wrapper
+- `skills/vnc/vnc_skill.py` — OpenClaw skill wrapper
+- `skills/vnc-hermes/` — Hermes Agent skill wrapper
 - `vncctl.py` — VNC control utility
 
 ## Security Notes
